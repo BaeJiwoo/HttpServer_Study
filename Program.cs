@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using Microsoft.AspNetCore.Identity.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -60,7 +59,7 @@ app.MapPost("/login", (LoginRequest request) =>
 
     var expiresAt = DateTime.UtcNow.AddMinutes(10);
 
-    var session = new LoginSession(playerId: testPlayerId, ExpiresAt: expiresAt);
+    var session = new LoginSession(PlayerId: testPlayerId, ExpiresAt: expiresAt);
 
     loginSessions[accessToken] = session;
 
@@ -76,45 +75,18 @@ app.MapPost("/login", (LoginRequest request) =>
 
 app.MapGet("/me", (HttpRequest request) =>
 {
+    var authResult = Authenticate(request);
 
-
-    var tokenResult = GetAccessToken(request);
-
-    if (!tokenResult.Success)
+    if (!authResult.Success)
     {
         return Results.Json(new
         {
-            message = tokenResult.ErrorMessage
+            message = authResult.ErrorMessage
         },
         statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var accessToken = tokenResult.AccessToken!;
-
-    if (!loginSessions.TryGetValue(
-        accessToken,
-        out var session))
-    {
-        return Results.Json(
-            new
-            {
-                message = "유효하지 않은 인증 토큰입니다."
-            },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    if (session.ExpiresAt <= DateTime.UtcNow)
-    {
-        loginSessions.TryRemove(accessToken, out _);
-
-        return Results.Json(new
-        {
-            message = "인증 토큰이 만료되었습니다."
-        },
-        statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    if (!players.TryGetValue(session.playerId, out var player))
+    if (!players.TryGetValue(authResult.PlayerId, out var player))
     {
         return Results.NotFound(new
         {
@@ -129,55 +101,20 @@ app.MapGet("/me", (HttpRequest request) =>
         nickname = player.Nickname,
         level = player.Level,
         gold = player.Gold,
-        tokenExpiresAt = session.ExpiresAt
     });
 });
 
 app.MapPost("/stages/{stageId:int}/complete", (int stageId, HttpRequest request) =>
 {
-    var tokenResult = GetAccessToken(request);
+    var authResult = Authenticate(request);
 
-    if (!tokenResult.Success)
+    if (!authResult.Success)
     {
         return Results.Json(new
         {
-            message = tokenResult.ErrorMessage
+            message = authResult.ErrorMessage
         },
         statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    var accessToken = tokenResult.AccessToken!;
-
-    if (!loginSessions.TryGetValue(accessToken, out var session))
-    {
-        return Results.Json(
-            new
-            {
-                message = "유효하지 않은 토큰입니다."
-            },
-            statusCode: StatusCodes.Status401Unauthorized
-        );
-    }
-
-    if (session.ExpiresAt <= DateTime.UtcNow)
-    {
-        loginSessions.TryRemove(accessToken, out _);
-
-        return Results.Json(
-            new
-            {
-                message = "인증 토큰 만료"
-            },
-            statusCode: StatusCodes.Status401Unauthorized
-        );
-    }
-
-    if (!players.TryGetValue(session.playerId, out var player))
-    {
-        return Results.Json(new
-        {
-            message = "플레이어 정보를 찾을 수 없음"
-        });
     }
 
     var rewardGold = stageId switch
@@ -190,7 +127,7 @@ app.MapPost("/stages/{stageId:int}/complete", (int stageId, HttpRequest request)
 
     if (rewardGold == 0)
     {
-        return Results.Json(new
+        return Results.NotFound(new
         {
             message = "존재하지 않는 스테이지입니다."
         });
@@ -200,7 +137,7 @@ app.MapPost("/stages/{stageId:int}/complete", (int stageId, HttpRequest request)
     
     while(true)
     {
-        if(!players.TryGetValue(session.playerId, out var currentPlayer))
+        if(!players.TryGetValue(authResult.PlayerId, out var currentPlayer))
         {
             return Results.NotFound( new
             {
@@ -230,28 +167,18 @@ app.MapPost("/stages/{stageId:int}/complete", (int stageId, HttpRequest request)
 
 app.MapPost("/logout", (HttpRequest request) =>
 {
-    var tokenResult = GetAccessToken(request);
+    var authResult = Authenticate(request);
 
-    if (!tokenResult.Success)
+    if (!authResult.Success)
     {
         return Results.Json(new
         {
-            message = tokenResult.ErrorMessage
+            message = authResult.ErrorMessage
         },
         statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var accessToken = tokenResult.AccessToken!;
-
-    if (!loginSessions.TryRemove(accessToken, out _))
-    {
-        return Results.Json(
-            new
-            {
-                message = "유효하지 않은 인증 토큰입니다."
-            },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
+    loginSessions.TryRemove(authResult.AccessToken!, out _);
 
     return Results.Ok(new
     {
@@ -295,12 +222,58 @@ static TokenResult GetAccessToken(HttpRequest request)
     );
 }
 
+AuthResult Authenticate(HttpRequest request)
+{
+    var tokenResult = GetAccessToken(request);
+
+    if (!tokenResult.Success)
+    {
+        return new AuthResult(
+            Success: false,
+            AccessToken: null,
+            PlayerId: 0,
+            ErrorMessage: "인증 토큰이 필요합니다."
+        );
+    }
+
+    var accessToken = tokenResult.AccessToken!;
+
+    if (!loginSessions.TryGetValue(accessToken, out var session))
+    {
+        return new AuthResult(
+            Success: false,
+            AccessToken: null,
+            PlayerId: 0,
+            ErrorMessage: "유효하지 않은 인증 토큰입니다."
+        );
+    }
+
+    if (session.ExpiresAt <= DateTime.UtcNow)
+    {
+        loginSessions.TryRemove(accessToken, out _);
+
+        return new AuthResult(
+            Success: false,
+            AccessToken: accessToken,
+            PlayerId: 0,
+            ErrorMessage: "인증 토큰이 만료되었습니다."
+        );
+    }
+
+    return new AuthResult(
+        Success: true,
+        AccessToken: accessToken,
+        PlayerId: session.PlayerId,
+        ErrorMessage: null
+    );
+}
+
 record LoginRequest(
     string Username,
     string Password);
 
 record LoginSession(
-    int playerId,
+    int PlayerId,
     DateTime ExpiresAt
 );
 
@@ -315,5 +288,12 @@ record PlayerData(
 record TokenResult(
     bool Success,
     string? AccessToken,
+    string? ErrorMessage
+);
+
+record AuthResult(
+    bool Success,
+    string? AccessToken,
+    int PlayerId,
     string? ErrorMessage
 );
