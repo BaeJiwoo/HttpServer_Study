@@ -1,4 +1,3 @@
-````markdown
 # ASP.NET Core HTTP 게임 서버 학습 프로젝트
 
 ASP.NET Core Minimal API를 사용하여 HTTP 기반 게임 서버의 기본 구조를 단계적으로 학습하는 프로젝트입니다.
@@ -409,22 +408,3 @@ var authResult = Authenticate(request);
 ```
 
 이후에는 ASP.NET Core Authentication Middleware와 `ClaimsPrincipal` 기반 구조로 발전시킬 예정입니다.
-
-## 커밋 메시지
-
-현재까지의 작업을 하나의 커밋으로 저장한다면 다음 메시지를 사용할 수 있습니다.
-
-```text
-feat: implement token-based authentication and stage rewards
-```
-
-세부 커밋으로 나누는 경우:
-
-```text
-feat: implement access token authentication
-feat: add session expiration and logout
-feat: add authenticated player profile endpoint
-feat: implement stage completion rewards
-fix: prevent concurrent gold update loss
-```
-````
